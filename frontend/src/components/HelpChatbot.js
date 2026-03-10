@@ -1,6 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { api } from '../utils/api';
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  COMPLETE APP KNOWLEDGE BASE — answers every possible user question
+// ─────────────────────────────────────────────────────────────────────────────
 const HELP_KB = {
   // HOW TO USE
   "how to use": {
@@ -248,6 +251,27 @@ export default function HelpChatbot({ context = null, showOnLanding = false }) {
     if (from === 'ai' && !open) setUnread(u => u + 1);
   };
 
+  const buildContextAwareAnswer = (msg, ctx) => {
+    if (!ctx || !ctx.financial) return null;
+    const { financial, career, burnout } = ctx;
+    const q = msg.toLowerCase();
+
+    // Personal score queries — reference actual data
+    if (q.match(/my score|my financial|my money|my spending|how am i doing/)) {
+      return `Based on your analysis:\n\n💳 **Financial Score: ${financial.score}/100 (Grade ${financial.grade})**\n→ Savings rate looks ${financial.score > 70 ? 'healthy' : 'needs attention'}\n→ ${financial.anomaly_count > 0 ? `⚠️ ${financial.anomaly_count} spending anomalies detected by IsolationForest` : '✅ No spending anomalies detected'}\n\n🚀 **Career Score: ${career.score}/100 (Grade ${career.grade})**\n→ ${career.all_found?.length || 0} skills found in your resume\n→ Job match: ${career.job_match || 0}%\n\n🧠 **Wellness Score: ${burnout.score}/100 (Grade ${burnout.grade})**\n→ Burnout risk: **${burnout.risk_level || 'Low'}**`;
+    }
+    if (q.match(/burnout|stress|wellness|health|tired|work.*hour|sleep/)) {
+      return `Your wellness analysis:\n\n🧠 **Burnout Score: ${burnout.score}/100**\n→ Risk Level: **${burnout.risk_level || 'Low'}**\n→ Work-life balance: ${burnout.score > 70 ? '✅ Good' : '⚠️ Needs improvement'}\n\n**Key factors affecting your score:**\n→ Work hours vs 8h optimal\n→ Sleep quality & quantity\n→ Exercise frequency\n→ Stress self-assessment\n\n**Recommendation:** ${burnout.score < 60 ? '🔴 Take immediate action — schedule recovery time this week' : burnout.score < 75 ? '🟡 Monitor your workload — consider more breaks' : '🟢 Keep maintaining your current balance!'}`;
+    }
+    if (q.match(/career|resume|skill|job|salary|linkedin/)) {
+      return `Your career analysis:\n\n🚀 **Career Score: ${career.score}/100 (Grade ${career.grade})**\n→ Skills detected: **${career.all_found?.join(', ') || 'None found'}**\n→ Job match rate: **${career.job_match || 0}%**\n\n**What's boosting your score:**\n${(career.strengths || []).slice(0,3).map(s => `✅ ${s}`).join('\n') || '✅ Resume submitted'}\n\n**Top recommendation:**\n${(career.recommendations || []).slice(0,2).map(r => `→ ${r}`).join('\n') || '→ Add quantified achievements to resume'}`;
+    }
+    if (q.match(/financial|money|sav|spend|budget|anomal|transaction/)) {
+      return `Your financial analysis:\n\n💳 **Financial Score: ${financial.score}/100 (Grade ${financial.grade})**\n→ ${financial.anomaly_count > 0 ? `⚠️ **${financial.anomaly_count} anomalies** flagged by IsolationForest ML` : '✅ No anomalies detected — spending looks consistent'}\n\n**Score drivers:**\n→ Savings rate, spend vs income ratio\n→ Emergency fund adequacy\n→ Transaction pattern consistency\n\n**Action:** ${financial.score < 60 ? '🔴 Review top spending categories immediately' : financial.score < 80 ? '🟡 Small optimizations can push you to A grade' : '🟢 Excellent financial discipline!'}`;
+    }
+    return null;
+  };
+
   const send = useCallback(async (overrideInput) => {
     const msg = (overrideInput || input).trim();
     if (!msg) return;
@@ -259,28 +283,29 @@ export default function HelpChatbot({ context = null, showOnLanding = false }) {
     await new Promise(r => setTimeout(r, 500));
 
     if (mode === 'help' || showOnLanding) {
-      // ALWAYS use knowledge base in help mode or on landing page
       const result = findAnswer(msg);
       addMessage('ai', result.answer);
     } else {
-      // AI Insights mode on Dashboard — try knowledge base first, then backend
-      const kbResult = findAnswer(msg);
-      const isGenericFallback = kbResult.icon === '🤔';
-
-      if (!isGenericFallback) {
-        // Knowledge base has a good answer — use it
-        addMessage('ai', kbResult.answer);
+      // AI Insights — try context-aware personal answer first
+      const contextAnswer = buildContextAwareAnswer(msg, context);
+      if (contextAnswer) {
+        addMessage('ai', contextAnswer);
       } else {
-        // Unknown query — try backend for personal score insights
-        try {
-          const res = await api.chat(msg, context || {});
-          if (res && res.response) {
-            addMessage('ai', res.response);
-          } else {
+        const kbResult = findAnswer(msg);
+        const isGenericFallback = kbResult.icon === '🤔';
+        if (!isGenericFallback) {
+          addMessage('ai', kbResult.answer);
+        } else {
+          try {
+            const res = await api.chat(msg, context || {});
+            if (res && res.response) {
+              addMessage('ai', res.response);
+            } else {
+              addMessage('ai', kbResult.answer);
+            }
+          } catch {
             addMessage('ai', kbResult.answer);
           }
-        } catch {
-          addMessage('ai', kbResult.answer);
         }
       }
     }
